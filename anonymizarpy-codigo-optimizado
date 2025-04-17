@@ -1,0 +1,177 @@
+import pandas as pd
+import numpy as np
+from faker import Faker
+import logging
+from typing import Dict, Callable, Optional
+
+# Configuración de logging para un mejor seguimiento
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+class DataAnonimizer:
+    """
+    Clase para anonimizar datos en un DataFrame de pandas.
+    """
+    def __init__(self, locale: str = 'es_CL'):
+        """
+        Inicializa el anonimizador con una configuración regional para Faker.
+
+        Args:
+            locale: Código de idioma para Faker (por defecto 'es_CL').
+        """
+        self.fake = Faker(locale)
+        self.anonymization_methods: Dict[str, Callable] = {
+            'nombre': self._anonimizar_nombre,
+            'apellido': self._anonimizar_apellido,
+            'email': self._anonimizar_email,
+            'telefono': self._anonimizar_telefono,
+            'direccion': self._anonimizar_direccion,
+            'fecha_nacimiento': self._anonimizar_fecha_nacimiento,
+            'texto_libre': self._anonimizar_texto_libre,
+            'id': self._generar_id_unico,
+            'categorico': self._mantener_o_reemplazar_categorico,
+            'numerico': self._anonimizar_numerico  # Nuevo método
+        }
+
+    def _anonimizar_nombre(self, series: pd.Series) -> pd.Series:
+        """Anonimiza nombres generando nombres falsos."""
+        return series.apply(lambda x: self.fake.first_name())
+
+    def _anonimizar_apellido(self, series: pd.Series) -> pd.Series:
+        """Anonimiza apellidos generando apellidos falsos."""
+        return series.apply(lambda x: self.fake.last_name())
+
+    def _anonimizar_email(self, series: pd.Series) -> pd.Series:
+        """Anonimiza emails generando emails falsos."""
+        # Intenta mantener el dominio si el formato es reconocible
+        def anonymize_email(email):
+            if isinstance(email, str) and '@' in email:
+                prefix = self.fake.user_name()
+                domain = email.split('@')[1]
+                return f"{prefix}@{domain}"
+            return self.fake.email()
+        return series.apply(anonymize_email)
+
+    def _anonimizar_telefono(self, series: pd.Series) -> pd.Series:
+        """Anonimiza números de teléfono generando números falsos."""
+        return series.apply(lambda x: self.fake.phone_number())
+
+    def _anonimizar_direccion(self, series: pd.Series) -> pd.Series:
+        """Anonimiza direcciones generando direcciones falsas."""
+        return series.apply(lambda x: self.fake.address())
+
+    def _anonimizar_fecha_nacimiento(self, series: pd.Series) -> pd.Series:
+        """Anonimiza fechas de nacimiento generando fechas aleatorias dentro de un rango."""
+        def anonymize_date(date_val):
+            if pd.notna(date_val):
+                return self.fake.date_between(start_date='-80y', end_date='-18y')
+            return pd.NaT  # Mantener NaT si el valor original es NaT
+        return series.apply(anonymize_date)
+
+    def _anonimizar_texto_libre(self, series: pd.Series) -> pd.Series:
+        """Reemplaza texto libre con texto falso (lorem ipsum)."""
+        return series.apply(lambda x: self.fake.paragraph(nb_sentences=3))
+
+    def _generar_id_unico(self, series: pd.Series) -> pd.Series:
+        """Genera IDs únicos falsos."""
+        return pd.Series([self.fake.uuid4() for _ in range(len(series))])
+
+    def _mantener_o_reemplazar_categorico(self, series: pd.Series, mapping: Optional[Dict[str, str]] = None) -> pd.Series:
+        """
+        Mantiene los valores categóricos o los reemplaza según un mapeo.
+
+        Args:
+            series: La columna categórica.
+            mapping: Un diccionario opcional para mapear valores originales a nuevos valores.
+                     Si es None, los valores se mantienen.
+        """
+        if mapping:
+            return series.map(mapping).fillna(series)  # Si no hay mapeo, mantiene el valor original
+        return series
+
+    def _anonimizar_numerico(self, series: pd.Series, perturbation_range: float = 0.1) -> pd.Series:
+        """
+        Aplica una pequeña perturbación aleatoria a los valores numéricos.
+
+        Args:
+            series: La columna numérica.
+            perturbation_range: La proporción máxima de perturbación (ej., 0.1 significa +/- 10%).
+        """
+        def perturb_value(value):
+            if pd.notna(value) and np.issubdtype(type(value), np.number):
+                perturbation = np.random.uniform(-perturbation_range, perturbation_range)
+                return value * (1 + perturbation)
+            return value
+        return series.apply(perturb_value)
+
+    def anonymize_dataframe(self, df: pd.DataFrame, config: Dict[str, str]) -> pd.DataFrame:
+        """
+        Anonimiza las columnas de un DataFrame según la configuración proporcionada.
+
+        Args:
+            df: El DataFrame de pandas a anonimizar.
+            config: Un diccionario donde las claves son los nombres de las columnas
+                    y los valores son el tipo de anonimización a aplicar
+                    (e.g., {'nombre': 'nombre', 'email': 'email', 'edad': 'numerico'}).
+                    Para el tipo 'categorico', el valor puede ser un diccionario de mapeo
+                    (e.g., {'genero': {'M': 'Otro', 'F': 'Otro'}}).
+
+        Returns:
+            Un nuevo DataFrame con los datos anonimizados.
+        """
+        anonymized_df = df.copy()
+        for column, method_config in config.items():
+            if column in anonymized_df.columns:
+                logging.info(f"Anonimizando columna: {column} con configuración: {method_config}")
+                if isinstance(method_config, str) and method_config in self.anonymization_methods:
+                    anonymized_df[column] = self.anonymization_methods[method_config](anonymized_df[column])
+                elif isinstance(method_config, dict) and 'tipo' in method_config and method_config['tipo'] == 'categorico':
+                    mapping = method_config.get('mapping')
+                    anonymized_df[column] = self.anonymization_methods['categorico'](anonymized_df[column], mapping)
+                elif isinstance(method_config, dict) and 'tipo' in method_config and method_config['tipo'] == 'numerico':
+                    perturbation_range = method_config.get('perturbation_range', 0.1)
+                    anonymized_df[column] = self.anonymization_methods['numerico'](anonymized_df[column], perturbation_range)
+                else:
+                    logging.warning(f"Método de anonimización no reconocido o configuración incorrecta para la columna: {column}")
+            else:
+                logging.warning(f"La columna '{column}' no existe en el DataFrame.")
+        return anonymized_df
+
+# Ejemplo de uso
+if __name__ == '__main__':
+    data = {
+        'id_usuario': [1, 2, 3, 4, 5],
+        'nombre': ['Juan Pérez', 'María González', 'Pedro López', 'Ana Vargas', 'Luis Rodríguez'],
+        'apellido': ['Pérez', 'González', 'López', 'Vargas', 'Rodríguez'],
+        'email': ['juan.perez@example.com', 'maria.gonzalez@other.org', 'pedro.lopez@domain.net', 'ana.vargas@sample.co.uk', 'luis.rodriguez@test.info'],
+        'telefono': ['+56 9 1234 5678', '+56 9 9876 5432', '+56 9 1122 3344', '+56 9 5566 7788', '+56 9 2244 6688'],
+        'direccion': ['Calle Falsa 123', 'Avenida Siempreviva 742', 'Pasaje Angosto 567', 'Camino Largo 890', 'Plaza Central s/n'],
+        'fecha_nacimiento': ['1990-01-15', '1985-05-20', '1992-11-10', '1988-07-01', '1995-03-25'],
+        'comentarios': ['Buen servicio.', 'Excelente atención.', 'Podría mejorar.', 'Muy rápido.', 'Sin problemas.'],
+        'genero': ['M', 'F', 'M', 'F', 'M'],
+        'edad': [33, 38, 31, 35, 28],
+        'categoria': ['A', 'B', 'A', 'C', 'B']
+    }
+    df = pd.DataFrame(data)
+
+    anonimizer = DataAnonimizer(locale='es_CL')
+    anonymization_config = {
+        'id_usuario': 'id',
+        'nombre': 'nombre',
+        'apellido': 'apellido',
+        'email': 'email',
+        'telefono': 'telefono',
+        'direccion': 'direccion',
+        'fecha_nacimiento': 'fecha_nacimiento',
+        'comentarios': 'texto_libre',
+        'genero': {'tipo': 'categorico', 'mapping': {'M': 'Otro', 'F': 'Otro'}},
+        'edad': {'tipo': 'numerico', 'perturbation_range': 0.05},
+        'categoria': 'categorico' # Se mantendrán los valores originales
+    }
+
+    anonymized_df = anonimizer.anonymize_dataframe(df, anonymization_config)
+    print("\nDataFrame Original:")
+    print(df)
+    print("\nDataFrame Anonimizado:")
+    print(anonymized_df)
+```
+
