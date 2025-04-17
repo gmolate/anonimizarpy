@@ -1,6 +1,6 @@
 # anonimizarpy
-anonimización de datos mediante python.
-Para uso en bases de datos segun la "
+anonimización de datos mediante python. Para uso en bases de datos abiertos ]MINSAL[  
+segun la nueva norma tecnica
 https://repositoriodeis.minsal.cl/ContenidoSitioWeb2020/EstandaresNormativa/Norma%20t%C3%A9cnica%20241%20de%20anonimizaci%C3%B3n%20datos%20abiertos.pdf
 Esta norma técnica se refiere al proceso de anonimización de datos estructurados en bases de datos para su publicación como datos abiertos
 
